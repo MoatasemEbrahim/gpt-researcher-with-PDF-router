@@ -1,0 +1,10 @@
+{
+  "after": {
+    "cost": 0.1147,
+    "sources": ["https://arxiv.org/pdf/1907.11692.pdf", "https://arxiv.org/pdf/1810.04805.pdf"]
+  },
+  "before": {
+    "cost": 0.1374,
+    "sources": ["https://arxiv.org/pdf/1907.11692.pdf", "https://arxiv.org/pdf/1810.04805.pdf"]
+  }
+}

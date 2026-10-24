@@ -251,6 +251,40 @@ Golden snippets passed (`tests/pdf_golden.py`, what a person reads on the page) 
 
 The router matches Docling on every check at 4–10× less time. It's slower than today's extractor, which skips layout: the cost is the layout model (~140 ms a page) plus the process pool. One gap remains against Docling: no `##` headings on tier-0 pages (0 against Docling's 34 on BERT).
 
+## End to end with real URLs
+
+Through the real `Scraper` (the path a research step uses, quality gates included), run with `python tests/pdf_router_e2e.py`. Details: `probe-output/e2e-mac.md`, `e2e-linux-docker.md`.
+
+| URL | Mac | Linux (Docker) | Result |
+| --- | --- | --- | --- |
+| arxiv.org/pdf/1810.04805.pdf (BERT, 16 pp) | 3.7 s | 8.5 s | 45 table rows, 5 figure markers |
+| arxiv.org/pdf/1907.11692.pdf (RoBERTa, 13 pp) | 2.5 s | 5.4 s | 83 table rows |
+| arxiv.org/pdf/1706.03762.pdf (Attention, 15 pp) | 3.5 s | 9.3 s | 32 table rows, 3 figure markers |
+| arxiv.org/pdf/2005.14165.pdf (GPT-3, 75 pp) | 15.2 s | 37.5 s | 562 table rows; 14 pages to tier 2 |
+| arxiv.org/pdf/1810.04805 (no `.pdf`) | 0.2 s | 0.4 s | `ArxivScraper`: abstract only, the router never runs |
+| arxiv.org/pdf/0000.00000.pdf (404) | 0.3 s | 0.5 s | dropped, as before |
+| **All six at once** | 18.3 s, peak 3.4 GB | 54.3 s, peak 2.8 GB | 5 kept |
+
+Times include the download; the workers were already started. The output is identical on both platforms, character for character. The arXiv PDFs have no title in their metadata, so the title is `""`, as before.
+
+**Scanned PDFs with no text layer** (National Archives JFK releases, pages are images only; today's extractor returns `""` for them, so the source is dropped):
+
+| URL | Pages | Mac | Result |
+| --- | --- | --- | --- |
+| archives.gov/files/research/jfk/releases/177-10001-10080.pdf | 2 | 6.3 s | both pages OCR'd (pymupdf4llm + RapidOCR), 2,547 chars; readable, with garbled runs where the scan is poor |
+| archives.gov/files/research/jfk/releases/177-10001-10180.pdf | 38 | 68.3 s | 36 pages OCR'd; pages 16 and 19 are grey cover sheets with no readable text and become `page N: not extracted` markers |
+
+OCR costs ~1.8 s a page here, so the default 120 s document budget covers about 65 scanned pages; longer scans return what finished and mark the rest.
+
+### One research run, before and after
+
+`python tests/pdf_router_research_run.py` runs `GPTResearcher` on exactly BERT's and RoBERTa's PDFs (no web search), once with the router and once without. Query: "How does RoBERTa change BERT's pre-training, and how much do those changes matter on SQuAD and MNLI?" Reports and the number check: `probe-output/research-*.md`.
+
+- **Both reports are correct on the numbers they quote,** for example RoBERTa 94.6 / 89.4 / 90.2 against BERT-large 90.9 / 81.8 / 86.6. The report without the router even rebuilt RoBERTa's Table 2 exactly.
+- **On these two papers the router made no visible difference.** In these LaTeX PDFs, today's extractor keeps table cells in reading order, one per line, and the model can rebuild the table from that.
+- **The router's gains are elsewhere:** scans (today's output is empty, so the source is dropped), text stored out of order, and figure noise. See "Before / after".
+- **Cost:** $0.11 with the router, $0.14 without (the repo's own estimates). With one run each, that difference is within noise.
+
 ## Measured cost per page (this Mac)
 
 | Step | Cost |
