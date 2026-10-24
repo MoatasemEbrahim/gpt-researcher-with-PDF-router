@@ -222,16 +222,26 @@ def test_a_queued_docling_job_does_not_time_out(fake, monkeypatch):
 
 
 def test_real_pools_on_the_mixed_fixture():
-    """Real worker processes: stage 1, OCR on the scan (tier 2), tables, merge in order."""
-    pytest.importorskip("pymupdf4llm")
+    """Real worker processes on BERT p1-2, the scan, RoBERTa p5-6, merged in order.
+
+    The scan's route depends on what's installed: pymupdf4llm with an OCR engine,
+    else Docling, else nothing reads it (CI's plain install has neither) and it
+    becomes a marker between its neighbours.
+    """
+    from gpt_researcher.scraper.pdf_router.backends import scan_ocr_available
+
+    if scan_ocr_available():
+        scan_backend, scan_text = "pymupdf4llm", "Permit me to introduce you to the facility of facsimile transmission."
+    elif BACKENDS[Tier.DOCLING].available():
+        scan_backend, scan_text = "docling", "Permit me to introduce you to the facility of facsimile transmission."
+    else:
+        scan_backend, scan_text = "", "<!-- page 3: not extracted"
     try:
         result = route_pdf((FIXTURES_DIR / "mixed-document.pdf").read_bytes(), "https://example.com/mixed.pdf")
     finally:
         executors.shutdown()
 
     text = re.sub(r"\s+", " ", result.markdown)
-    left = text.index("Left-to-right language model")
-    assert left < text.index("Permit me to introduce you to the facility of facsimile transmission.")
-    assert text.index("Permit me to introduce") < text.index("SEGMENT-PAIR")
-    assert [o.backend_used for o in result.pages] == ["plain", "plain", "pymupdf4llm", "pymupdf_tables", "pymupdf_tables"]
-    assert all(o.status == "ok" for o in result.pages)
+    assert text.index("Left-to-right language model") < text.index(scan_text) < text.index("SEGMENT-PAIR")
+    assert [o.backend_used for o in result.pages] == ["plain", "plain", scan_backend, "pymupdf_tables", "pymupdf_tables"]
+    assert [o.status for o in result.pages] == ["ok", "ok", "ok" if scan_backend else "failed", "ok", "ok"]

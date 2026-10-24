@@ -2,7 +2,7 @@
 
 The router classifies each page of a PDF and parses it with the cheapest backend that can handle it. The pages are merged back into one Markdown string, which `PyMuPDFScraper` returns through the existing `(content, image_urls, title)` contract.
 
-Status: signals, classification, the four backends, the router, the process pools and the fallback chain are built (Phases 2–4). Only the scraper wiring (Phase 5) is still **planned**, so it's drawn dashed.
+Status: built and wired into `PyMuPDFScraper` (Phases 2–5). Both ways into it go through the router: `get_scraper()` for `.pdf` URLs, and `Scraper._retry_as_pdf()` when an HTML scraper got PDF bytes.
 
 ## Structure
 
@@ -24,9 +24,9 @@ flowchart LR
             doc["docling.py<br/>tier 3"]
         end
     end
-    scraper["scraper/pymupdf/pymupdf.py<br/>PyMuPDFScraper · wiring planned"]:::planned
+    scraper["scraper/pymupdf/pymupdf.py<br/>PyMuPDFScraper.scrape()"]
 
-    scraper -.-> router
+    scraper --> router & settings
     router --> signals & classify & binit & executors & settings
     executors --> settings
     init --> classify & signals & types & router
@@ -39,7 +39,6 @@ flowchart LR
     llm --> p4llm[("pymupdf4llm + RapidOCR or Tesseract<br/>optional")]
     doc --> docling[("docling<br/>optional")]
 
-    classDef planned stroke-dasharray: 5 5
 ```
 
 | File | Role |
@@ -54,6 +53,28 @@ flowchart LR
 | `backends/docling.py` | Tier 3: one Docling call per document, via a sub-PDF of the routed pages |
 | `router.py` | `route_pdf(pdf, source_url) -> RouterResult`: stage 1, stage 2, the fallback chain, the time budget and the merge |
 | `executors.py` | Long-lived pools per process (`spawn`): the shared pool, the Docling pool, the Docling slot, and waiter threads |
+
+## Turning it off
+
+**What's optional:** `pymupdf` 2.0 already installs pymupdf4llm and the layout model, so tiers 0–2 always work. Only OCR (`rapidocr`, or a system Tesseract) and Docling are optional. Without them, scanned pages come back as `page N: not extracted` markers. Docling checks the Hugging Face Hub for its models every time a converter starts, so offline deployments need `HF_HUB_OFFLINE=1`.
+
+`PDF_ROUTER_ENABLED=false` sends PDFs back through the old path: one `PyMuPDFLoader` pass over the whole file, joined with `\n`. Other settings: `PDF_ROUTER_MAX_WORKERS` (default `min(4, cpu)`), `PDF_ROUTER_DOCLING_CONCURRENCY` (default 1) and `PDF_ROUTER_DOC_TIMEOUT_S` (default 120).
+
+## How the scraper calls it
+
+```mermaid
+flowchart TD
+    A["PyMuPDFScraper.scrape()"] --> B{"PDF_ROUTER_ENABLED?"}
+    B -->|"true, the default"| C{"URL or local path?"}
+    C -->|"URL"| D["_download(): requests, timeout (5, 30),<br/>retry without SSL check on SSLError"]
+    D --> E["join the streamed chunks into bytes"]
+    C -->|"path"| F["read the file's bytes"]
+    E & F --> G["route_pdf(bytes, link)"]
+    G --> H["return (markdown, [], title)"]
+    B -->|"false"| L["_scrape_with_loader(): download to a temp file,<br/>PyMuPDFLoader, remove the temp file"]
+    L --> H2["return (text, [], title)"]
+    D & G & L -.->|"any exception"| X["print it, return ('', [], '')"]
+```
 
 ## Design: how a PDF goes through the router
 

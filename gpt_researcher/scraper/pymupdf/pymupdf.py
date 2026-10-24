@@ -1,6 +1,7 @@
 import os
 import requests
 import tempfile
+from pathlib import Path
 from urllib.parse import urlparse
 from langchain_community.document_loaders import PyMuPDFLoader
 
@@ -33,51 +34,23 @@ class PyMuPDFScraper:
 
     def scrape(self) -> tuple[str, list[str], str]:
         """
-        The `scrape` function uses PyMuPDFLoader to load a document from the provided link (either URL or local file)
-        and returns the document as a string.
+        The `scrape` function loads a PDF from the provided link (either URL or local file) and
+        returns it as Markdown. Each page goes through the PDF page router (see pdf_router/README.md),
+        or, with PDF_ROUTER_ENABLED=false, through PyMuPDFLoader as before.
 
         Returns:
-          str: A string representation of the loaded document.
+          tuple: (content, image URLs, title); ("", [], "") on any error.
         """
+        # Imported here, not at module level: the router loads PyMuPDF, its layout
+        # model and pymupdf4llm (~0.4 s, ~150 MB), which every process that imports
+        # gpt_researcher.scraper would otherwise pay before it ever sees a PDF.
+        from .. import pdf_router
+
         try:
-            if self.is_url():
-                http = self.session or requests
-                try:
-                    response = http.get(self.link, timeout=(5, 30), stream=True)
-                    response.raise_for_status()
-                except requests.exceptions.SSLError:
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        f"SSL verification failed for {self.link}, retrying without verification"
-                    )
-                    response = http.get(self.link, timeout=(5, 30), stream=True, verify=False)
-                    response.raise_for_status()
-
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                    temp_filename = temp_file.name  # Get the temporary file name
-                    for chunk in response.iter_content(chunk_size=8192):
-                        temp_file.write(chunk)  # Write the downloaded content to the temporary file
-
-                # Always clean up the downloaded temp file, even if loading fails
-                # (PyMuPDFLoader.load() can raise on a malformed/partial PDF).
-                try:
-                    loader = PyMuPDFLoader(temp_filename)
-                    doc = loader.load()
-                finally:
-                    try:
-                        os.remove(temp_filename)
-                    except OSError:
-                        pass
-            else:
-                loader = PyMuPDFLoader(self.link)
-                doc = loader.load()
-
-            # Extract the content, image (if any), and title from the document.
-            image = []
-            # Retrieve content from ALL pages to ensure PDFs with cover pages pass validation.
-            content = "\n".join(page.page_content for page in doc)
-            title = doc[0].metadata.get("title", "") if doc else ""
-            return content, image, title
+            if pdf_router.settings.enabled():
+                result = pdf_router.route_pdf(self._read_pdf(), self.link)
+                return result.markdown, [], result.title
+            return self._scrape_with_loader()
 
         except requests.exceptions.Timeout:
             print(f"Download timed out. Please check the link : {self.link}")
@@ -85,3 +58,53 @@ class PyMuPDFScraper:
         except Exception as e:
             print(f"Error loading PDF : {self.link} {e}")
             return "", [], ""
+
+    def _download(self) -> requests.Response:
+        http = self.session or requests
+        try:
+            response = http.get(self.link, timeout=(5, 30), stream=True)
+            response.raise_for_status()
+        except requests.exceptions.SSLError:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"SSL verification failed for {self.link}, retrying without verification"
+            )
+            response = http.get(self.link, timeout=(5, 30), stream=True, verify=False)
+            response.raise_for_status()
+        return response
+
+    def _read_pdf(self) -> bytes:
+        """The PDF's bytes, downloaded in memory or read from the local file."""
+        if self.is_url():
+            return b"".join(self._download().iter_content(chunk_size=8192))
+        return Path(self.link).read_bytes()
+
+    def _scrape_with_loader(self) -> tuple[str, list[str], str]:
+        """Legacy path: one extractor for the whole file (PDF_ROUTER_ENABLED=false)."""
+        if self.is_url():
+            response = self._download()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                temp_filename = temp_file.name  # Get the temporary file name
+                for chunk in response.iter_content(chunk_size=8192):
+                    temp_file.write(chunk)  # Write the downloaded content to the temporary file
+
+            # Always clean up the downloaded temp file, even if loading fails
+            # (PyMuPDFLoader.load() can raise on a malformed/partial PDF).
+            try:
+                loader = PyMuPDFLoader(temp_filename)
+                doc = loader.load()
+            finally:
+                try:
+                    os.remove(temp_filename)
+                except OSError:
+                    pass
+        else:
+            loader = PyMuPDFLoader(self.link)
+            doc = loader.load()
+
+        # Extract the content, image (if any), and title from the document.
+        image = []
+        # Retrieve content from ALL pages to ensure PDFs with cover pages pass validation.
+        content = "\n".join(page.page_content for page in doc)
+        title = doc[0].metadata.get("title", "") if doc else ""
+        return content, image, title

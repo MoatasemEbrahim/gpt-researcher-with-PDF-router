@@ -6,6 +6,10 @@ When scraping a remote PDF, the scraper downloads it to a
 success path, so a parse failure (malformed/partial PDF -> ``PyMuPDFLoader.load``
 raises) left the temp file behind on disk every time. The exception is then
 swallowed by the broad ``except``, so the leak was silent.
+
+That loader path now runs only with ``PDF_ROUTER_ENABLED=false``. By default the
+PDF is read into memory and goes through the page router, which writes no temp
+file; a broken PDF must still give the empty result and leave nothing behind.
 """
 
 import os
@@ -28,7 +32,24 @@ def _temp_pdfs() -> set:
     return set(glob.glob(os.path.join(tempfile.gettempdir(), "*.pdf")))
 
 
-def test_tempfile_removed_when_loader_raises():
+def test_broken_pdf_through_the_router_gives_empty_result_and_no_temp_file():
+    scraper = PyMuPDFScraper("https://example.com/broken.pdf")
+
+    before = _temp_pdfs()
+
+    with patch(
+        "gpt_researcher.scraper.pymupdf.pymupdf.requests.get",
+        return_value=_FakeResponse(),
+    ):
+        content, images, title = scraper.scrape()
+
+    assert (content, images, title) == ("", [], "")
+    leaked = _temp_pdfs() - before
+    assert not leaked, f"PyMuPDFScraper leaked temp file(s): {leaked}"
+
+
+def test_tempfile_removed_when_loader_raises(monkeypatch):
+    monkeypatch.setenv("PDF_ROUTER_ENABLED", "false")  # the legacy loader path
     scraper = PyMuPDFScraper("https://example.com/broken.pdf")
 
     before = _temp_pdfs()
