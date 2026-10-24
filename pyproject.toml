@@ -125,7 +125,7 @@ dependencies = [
     "pydantic-core>=2.33.2",
     "pydantic-settings>=2.9.1",
     "pydyf>=0.11.0",
-    "pymupdf>=1.26.0",
+    "pymupdf>=2.0",  # 2.0 brings pymupdf-layout, which the PDF page router needs for tables and figures
     "pypdf>=5.5.0",
     "pyphen>=0.17.2",
     "python-docx>=1.1.2",
@@ -201,6 +201,14 @@ requirements-txt = [
     "playwright",
     "scrapy",
     "selenium",
+]
+# Optional PDF page router backends (see gpt_researcher/scraper/pdf_router/README.md):
+# OCR for scanned pages and Docling as the last-resort parser. Install with:
+#   pip install "gpt-researcher[pdf-router]"
+# Without them, tiers 0-2 still run and scanned pages become page markers.
+pdf-router = [
+    "rapidocr>=3",
+    "docling>=2",
 ]
 # Optional agent observability via Monocle. Install with:
 #   pip install "gpt-researcher[monocle]"

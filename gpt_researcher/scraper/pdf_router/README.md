@@ -2,6 +2,8 @@
 
 The router classifies each page of a PDF and parses it with the cheapest backend that can handle it. The pages are merged back into one Markdown string, which `PyMuPDFScraper` returns through the existing `(content, image_urls, title)` contract.
 
+The decisions, trade-offs and weak spots are summarised in [`DECISIONS.md`](../../../DECISIONS.md) at the repo root; this file holds the diagrams and the numbers.
+
 Status: built and wired into `PyMuPDFScraper` (Phases 2–5). Both ways into it go through the router: `get_scraper()` for `.pdf` URLs, and `Scraper._retry_as_pdf()` when an HTML scraper got PDF bytes.
 
 ## Structure
@@ -56,7 +58,7 @@ flowchart LR
 
 ## Turning it off
 
-**What's optional:** `pymupdf` 2.0 already installs pymupdf4llm and the layout model, so tiers 0–2 always work. Only OCR (`rapidocr`, or a system Tesseract) and Docling are optional. Without them, scanned pages come back as `page N: not extracted` markers. Docling checks the Hugging Face Hub for its models every time a converter starts, so offline deployments need `HF_HUB_OFFLINE=1`.
+**What's optional:** `pymupdf` 2.0 already installs pymupdf4llm and the layout model, so tiers 0–2 always work. Only OCR (`rapidocr`, or a system Tesseract) and Docling are optional: `pip install "gpt-researcher[pdf-router]"`. Without them, scanned pages come back as `page N: not extracted` markers. Docling checks the Hugging Face Hub for its models every time a converter starts, so offline deployments need `HF_HUB_OFFLINE=1`.
 
 `PDF_ROUTER_ENABLED=false` sends PDFs back through the old path: one `PyMuPDFLoader` pass over the whole file, joined with `\n`. Other settings: `PDF_ROUTER_MAX_WORKERS` (default `min(4, cpu)`), `PDF_ROUTER_DOCLING_CONCURRENCY` (default 1) and `PDF_ROUTER_DOC_TIMEOUT_S` (default 120).
 
