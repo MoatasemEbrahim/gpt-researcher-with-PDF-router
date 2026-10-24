@@ -234,6 +234,23 @@ flowchart TD
     T2 -.->|"fails → tier 0 finds no text"| X["p3 → page N: not extracted comment;<br/>the other 4 pages are still returned"]
 ```
 
+## Before / after (this Mac)
+
+Golden snippets passed (`tests/pdf_golden.py`, what a person reads on the page) and time per document. "Today" is `PyMuPDFScraper` before the router (`PDF_ROUTER_ENABLED=false`). Router times are warm. Docling times start a new converter per file, so they include its start-up. The full per-check table is in `tests/fixtures/pdf/probe-output/comparison.md`, regenerated with `python tests/pdf_fixture_probe.py --docling --router`.
+
+| Fixture | Pages | Today | Router | Docling |
+| --- | --- | --- | --- | --- |
+| borderless-table (RoBERTa) | 13 | 2/3, 0.62 s* | 3/3, 1.99 s | 3/3, 20.41 s |
+| mixed-document | 5 | 1/4, 0.02 s | 4/4, 2.76 s | 4/4, 12.50 s |
+| out-of-order-columns | 1 | 2/3, 0.00 s | 3/3, 0.43 s | 3/3, 2.37 s |
+| scanned-page | 1 | 1/4, 0.00 s | 4/4, 1.60 s | 4/4, 6.31 s |
+| two-column-paper (BERT) | 16 | 1/3, 0.04 s | 3/3, 1.82 s | 3/3, 12.73 s |
+| **Total** | 36 | **7/17** | **17/17** | **17/17** |
+
+\* The first file also pays for loading `PyMuPDFLoader`; the others take 0.02–0.04 s.
+
+The router matches Docling on every check at 4–10× less time. It's slower than today's extractor, which skips layout: the cost is the layout model (~140 ms a page) plus the process pool. One gap remains against Docling: no `##` headings on tier-0 pages (0 against Docling's 34 on BERT).
+
 ## Measured cost per page (this Mac)
 
 | Step | Cost |

@@ -9,12 +9,15 @@ Usage (from the repo root):
     python tests/pdf_fixture_probe.py                     # tests/fixtures/pdf/*.pdf
     python tests/pdf_fixture_probe.py path/to/file.pdf    # specific files
     python tests/pdf_fixture_probe.py --docling           # also time Docling (slow)
+    python tests/pdf_fixture_probe.py --docling --router  # plus the page router and comparison.md
 
 Not a pytest test (the filename doesn't start with test_), just a dev script.
 """
 
 import argparse
+import dataclasses
 import json
+import os
 import re
 import statistics
 import sys
@@ -133,14 +136,22 @@ def garbage_ratio(text):
 
 
 def current_extractor(path):
-    """What production returns today for this PDF (content string)."""
+    """What PyMuPDFScraper returned before the router (content string): its legacy path."""
     try:
         from gpt_researcher.scraper.pymupdf.pymupdf import PyMuPDFScraper
     except ImportError as error:
         print(f"  (can't import PyMuPDFScraper: {error}; using plain PyMuPDF)")
         with pymupdf.open(path) as doc:
             return "\n".join(page.get_text() for page in doc)
-    content, _images, _title = PyMuPDFScraper(str(path)).scrape()
+    previous = os.environ.get("PDF_ROUTER_ENABLED")
+    os.environ["PDF_ROUTER_ENABLED"] = "false"  # the "before": one PyMuPDFLoader pass
+    try:
+        content, _images, _title = PyMuPDFScraper(str(path)).scrape()
+    finally:
+        if previous is None:
+            del os.environ["PDF_ROUTER_ENABLED"]
+        else:
+            os.environ["PDF_ROUTER_ENABLED"] = previous
     return content
 
 
@@ -204,8 +215,74 @@ def probe_pdf(path, use_docling, pymupdf4llm):
         (OUT_DIR / f"{path.stem}.docling.md").write_text(markdown)
         print(f"  docling, whole document: {result['docling_ms']} ms")
 
-    (OUT_DIR / f"{path.stem}.baseline.txt").write_text(current_extractor(path))
+    baseline, result["baseline_ms"] = timed(lambda: current_extractor(path))
+    (OUT_DIR / f"{path.stem}.baseline.txt").write_text(baseline)
     return result
+
+
+def probe_router(pdfs):
+    """Route each PDF with the real router: <name>.router.md, and per-page outcomes for router.json."""
+    from gpt_researcher.scraper.pdf_router import executors, route_pdf
+
+    route_pdf(pdfs[0].read_bytes(), "warm-up")  # start the worker processes outside the timings
+    report = {}
+    try:
+        for path in pdfs:
+            result, ms = timed(lambda: route_pdf(path.read_bytes(), path.name))
+            (OUT_DIR / f"{path.stem}.router.md").write_text(result.markdown)
+            pages = [{**dataclasses.asdict(o), "tier_planned": o.tier_planned.name} for o in result.pages]
+            report[path.name] = {"ms": ms, "pages": pages}
+            print(f"\n{path.name}: router {ms} ms")
+            print_table([{k: p[k] for k in ("page", "tier_planned", "backend_used", "ms", "status", "reason")} for p in pages])
+    finally:
+        executors.shutdown()
+    (OUT_DIR / "router.json").write_text(json.dumps(report, indent=2))
+    return report
+
+
+def write_comparison(results, report):
+    """comparison.md: golden checks passed and time, for today's extractor, the router and Docling."""
+    from tests.pdf_golden import check
+
+    outputs = (("Baseline (today)", "baseline.txt"), ("Router", "router.md"), ("Docling", "docling.md"))
+    times = {
+        r["file"]: {"baseline.txt": r.get("baseline_ms"), "router.md": report.get(r["file"], {}).get("ms"), "docling.md": r.get("docling_ms")}
+        for r in results
+    }
+    summary = ["| Fixture | Pages | " + " | ".join(label for label, _ in outputs) + " |", "| --- | --- |" + " --- |" * len(outputs)]
+    details = ["| Fixture | Check | " + " | ".join(label for label, _ in outputs) + " |", "| --- | --- |" + " --- |" * len(outputs)]
+    for r in results:
+        stem, verdicts = Path(r["file"]).stem, {}
+        for _label, suffix in outputs:
+            path = OUT_DIR / f"{stem}.{suffix}"
+            verdicts[suffix] = check(stem, path.read_text()) if path.exists() else None
+        cells = []
+        for _label, suffix in outputs:
+            ms = times[r["file"]][suffix]
+            if verdicts[suffix] is None:
+                cells.append("n/a")
+                continue
+            passed = sum(ok for _description, ok in verdicts[suffix])
+            cells.append(f"{passed}/{len(verdicts[suffix])}" + (f", {ms / 1000:.2f} s" if ms is not None else ""))
+        summary.append(f"| {stem} | {len(r['pages'])} | " + " | ".join(cells) + " |")
+        reference = next(v for v in verdicts.values() if v is not None)
+        for index, (description, _ok) in enumerate(reference):
+            marks = ["n/a" if verdicts[s] is None else ("✓" if verdicts[s][index][1] else "✗") for _l, s in outputs]
+            details.append(f"| {stem} | {description} | " + " | ".join(marks) + " |")
+    text = "\n".join([
+        "# Before / after on the PDF fixtures",
+        "",
+        "Generated by `python tests/pdf_fixture_probe.py --docling --router`. Checks are the golden snippets",
+        "in `tests/pdf_golden.py`. Times are on the machine that ran it. Router times are warm (workers",
+        "already started). Docling times are a new converter per file, so they include its start-up.",
+        "",
+        *summary,
+        "",
+        *details,
+        "",
+    ])
+    (OUT_DIR / "comparison.md").write_text(text)
+    print("\n" + text)
 
 
 def print_table(rows):
@@ -220,6 +297,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("pdfs", nargs="*", type=Path, help="PDF files (default: fixtures dir)")
     parser.add_argument("--docling", action="store_true", help="also time Docling per document")
+    parser.add_argument("--router", action="store_true", help="also run the page router and write comparison.md")
     args = parser.parse_args()
 
     pdfs = args.pdfs or sorted(FIXTURES_DIR.glob("*.pdf"))
@@ -238,6 +316,8 @@ def main():
 
     (OUT_DIR / "signals.json").write_text(json.dumps(results, indent=2))
     print(f"\nSaved baseline text and signals.json to {OUT_DIR}")
+    if args.router:
+        write_comparison(results, probe_router(pdfs))
 
 
 if __name__ == "__main__":
