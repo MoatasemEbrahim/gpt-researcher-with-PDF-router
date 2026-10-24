@@ -23,3 +23,22 @@ class PageSignals:
     back_jump_ratio: float
     tables: int  # table regions found by PyMuPDF's layout model
     pictures: int  # figure regions; every tier replaces their text with a marker, so they don't affect the tier
+
+
+@dataclass
+class PageOutcome:
+    """What happened to one page."""
+
+    page: int  # 0-based
+    tier_planned: Tier
+    backend_used: str  # backend name, or "" if none produced text
+    ms: float
+    status: str  # "ok" | "fallback" | "failed"
+    reason: str = ""
+
+
+@dataclass
+class RouterResult:
+    markdown: str
+    title: str
+    pages: list[PageOutcome]
