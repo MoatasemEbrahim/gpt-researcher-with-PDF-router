@@ -11,9 +11,18 @@ def enabled() -> bool:
 def max_workers() -> int:
     """Processes in the shared pool (signals, tiers 0-2).
 
-    Measured per worker: ~260 MB after start-up, ~650 MB after parsing, ~1.2 GB once it has run OCR.
+    Measured per worker: ~260 MB after start-up, ~650-870 MB after parsing text PDFs, ~830-900 MB once it has also run OCR.
     """
     return int(os.environ.get("PDF_ROUTER_MAX_WORKERS", min(4, os.cpu_count() or 1)))
+
+
+def worker_max_tasks() -> int | None:
+    """Tasks a shared worker runs before it's replaced (0 = never).
+
+    Replacing a worker releases memory that Python and the native libraries never hand back.
+    A restart costs ~1.2 s (re-importing the package) plus the model load.
+    """
+    return int(os.environ.get("PDF_ROUTER_WORKER_MAX_TASKS", "200")) or None
 
 
 def docling_concurrency() -> int:

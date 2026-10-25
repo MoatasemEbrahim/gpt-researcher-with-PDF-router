@@ -33,7 +33,9 @@ What was built, what was measured, and what was rejected. Design diagrams, per-f
 - Workers are processes, not threads: PyMuPDF isn't thread-safe and the work is CPU-bound. One shared `ProcessPoolExecutor` per process, because the scraper already runs many URLs at once in threads; a pool per PDF would multiply processes. `spawn` on every platform: fork is unsafe once the scraper's threads exist.
 - Stage 1 runs in the pool in chunks of 2 pages: signals, classify, and tiers 0–1 rendered right there, reusing the page's layout result (`find_tables()` would otherwise run the model a second time: 240 → 30–90 ms). Stage 2 sends tier-2 chunks to the same pool and all tier-3 pages to a dedicated Docling pool in one call, after every page is classified.
 - A process-wide Docling slot (`PDF_ROUTER_DOCLING_CONCURRENCY`, default 1) caps running Docling jobs across all PDFs. A job's timeout starts when it holds a slot, not while it queues behind another PDF's job; otherwise a healthy job could time out and its reset would kill the other job.
-- Measured: a 16-page paper in 1.8 s warm; six arXiv URLs at once through the real `Scraper` in 18 s with a 3.4 GB peak (Linux: 54 s, 2.8 GB, identical output). Memory per shared worker: ~260 MB at start, ~650 MB after parsing, ~1.2 GB once it has run OCR; the Docling worker ~1.3 GB. Each spawned worker re-imports the package (~1.2 s), paid once per worker.
+- Measured: a 16-page paper in 1.8 s warm; six arXiv URLs at once through the real `Scraper` in 18 s with a 3.4 GB peak (Linux: 54 s, 2.8 GB, identical output). Memory per shared worker: ~260 MB at start, ~650–870 MB after parsing text PDFs, ~830–900 MB once it has also run OCR; the Docling worker ~1.3 GB. Each spawned worker re-imports the package (~1.2 s), paid once per worker.
+- Shared workers are replaced after `PDF_ROUTER_WORKER_MAX_TASKS` tasks (default 200, `0` = never) through `max_tasks_per_child`, releasing memory the native libraries never return; Docling workers aren't, since a restart costs 8–20 s.
+- **Tried and rejected on measurement:** a dedicated one-worker OCR pool, to keep OCR's models out of the shared workers. On the same machine and documents it made the 38-page scan slower (54 → 63 s: four workers doing OCR in parallel were only 13% faster than one) and the six-URL peak higher (3.3 → 4.2 GB): OCR adds only ~200–300 MB to a shared worker, while the extra process holds ~1.1 GB and idles between scans. Reverted.
 
 ## Failure handling
 
@@ -72,5 +74,5 @@ What was built, what was measured, and what was rejected. Design diagrams, per-f
 ## Another week
 
 - Verify-and-escalate with a per-document cost budget; headings in tier 0 from font size and weight; vision-model descriptions of figures and charts; math to LaTeX.
-- Send workers a temp-file path instead of the bytes; a faster table-to-Markdown path (`table.extract()` is 8 ms but drops decimal points); cache parsed PDFs by content hash.
+- Send workers a temp-file path instead of the bytes; a faster table-to-Markdown path (`table.extract()` is 8 ms but drops decimal points); cache parsed PDFs by content hash; an OCR worker that shuts itself down when idle (the measured objection to the OCR pool was its idle 1.1 GB).
 - Route the browser scraper and the document loaders through the router; try pdf_oxide or LiteParse as a licence-friendly engine for tiers 0–2.

@@ -5,6 +5,7 @@ threads see the monkeypatched registry, worker processes wouldn't. The last test
 runs the real pools on a fixture.
 """
 
+import os
 import re
 import threading
 import time
@@ -14,7 +15,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from gpt_researcher.scraper.pdf_router import Tier, executors, route_pdf, router
+from gpt_researcher.scraper.pdf_router import Tier, executors, route_pdf, router, settings
 from gpt_researcher.scraper.pdf_router.backends import BACKENDS
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests/fixtures/pdf
@@ -245,3 +246,26 @@ def test_real_pools_on_the_mixed_fixture():
     assert text.index("Left-to-right language model") < text.index(scan_text) < text.index("SEGMENT-PAIR")
     assert [o.backend_used for o in result.pages] == ["plain", "plain", scan_backend, "pymupdf_tables", "pymupdf_tables"]
     assert [o.status for o in result.pages] == ["ok", "ok", "ok" if scan_backend else "failed", "ok", "ok"]
+
+
+# --- worker recycling ---
+
+
+def test_shared_workers_are_replaced_after_max_tasks(monkeypatch):
+    """Real spawn pool: with a limit of 1 task per worker, two tasks run in two different processes."""
+    monkeypatch.setenv("PDF_ROUTER_WORKER_MAX_TASKS", "1")
+    monkeypatch.setenv("PDF_ROUTER_MAX_WORKERS", "1")
+    try:
+        pool = executors.shared_pool()
+        pids = [pool.submit(os.getpid).result(timeout=120) for _ in range(2)]
+    finally:
+        executors.shutdown()
+
+    assert pids[0] != pids[1]
+
+
+def test_worker_max_tasks_zero_disables_recycling(monkeypatch):
+    monkeypatch.setenv("PDF_ROUTER_WORKER_MAX_TASKS", "0")
+    assert settings.worker_max_tasks() is None
+    monkeypatch.delenv("PDF_ROUTER_WORKER_MAX_TASKS")
+    assert settings.worker_max_tasks() == 200

@@ -9,6 +9,10 @@
 - docling_waiters(): threads that only wait on Docling jobs (slot, timeout, reset),
   so route_pdf() can wait on Docling and the shared pool together.
 
+Shared workers are replaced after PDF_ROUTER_WORKER_MAX_TASKS tasks (max_tasks_per_child),
+which releases memory that Python and the native libraries never hand back. Docling workers
+aren't: a restart costs 8-20 s, and that pool has its own reset on timeout.
+
 Workers use "spawn" on every platform: fork is unsafe once the scraper's threads run.
 A spawned worker re-imports the gpt_researcher package (~1.2 s), once per worker.
 """
@@ -31,7 +35,9 @@ def shared_pool() -> Executor:
     with _lock:
         if _shared is None:
             _shared = ProcessPoolExecutor(
-                max_workers=settings.max_workers(), mp_context=multiprocessing.get_context("spawn")
+                max_workers=settings.max_workers(),
+                mp_context=multiprocessing.get_context("spawn"),
+                max_tasks_per_child=settings.worker_max_tasks(),
             )
         return _shared
 

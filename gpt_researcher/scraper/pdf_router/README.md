@@ -60,7 +60,7 @@ flowchart LR
 
 **What's optional:** `pymupdf` 2.0 already installs pymupdf4llm and the layout model, so tiers 0–2 always work. Only OCR (`rapidocr`, or a system Tesseract) and Docling are optional: `pip install "gpt-researcher[pdf-router]"`. Without them, scanned pages come back as `page N: not extracted` markers. Docling checks the Hugging Face Hub for its models every time a converter starts, so offline deployments need `HF_HUB_OFFLINE=1`.
 
-`PDF_ROUTER_ENABLED=false` sends PDFs back through the old path: one `PyMuPDFLoader` pass over the whole file, joined with `\n`. Other settings: `PDF_ROUTER_MAX_WORKERS` (default `min(4, cpu)`), `PDF_ROUTER_DOCLING_CONCURRENCY` (default 1) and `PDF_ROUTER_DOC_TIMEOUT_S` (default 120).
+`PDF_ROUTER_ENABLED=false` sends PDFs back through the old path: one `PyMuPDFLoader` pass over the whole file, joined with `\n`. Other settings: `PDF_ROUTER_MAX_WORKERS` (default `min(4, cpu)`), `PDF_ROUTER_DOCLING_CONCURRENCY` (default 1), `PDF_ROUTER_DOC_TIMEOUT_S` (default 120) and `PDF_ROUTER_WORKER_MAX_TASKS` (default 200: a shared worker is replaced after that many tasks, which releases memory the native libraries never hand back; 0 = never).
 
 ## How the scraper calls it
 
@@ -105,6 +105,7 @@ flowchart TD
 - **Docling slot:** at most `PDF_ROUTER_DOCLING_CONCURRENCY` Docling jobs run at once, across all PDFs. A job's timeout (30 s + 10 s × pages) starts once it holds a slot, so waiting behind another PDF's job never times it out. On a timeout, the Docling pool is stopped and rebuilt, because a running task can't be cancelled.
 - **Document budget:** `PDF_ROUTER_DOC_TIMEOUT_S` (default 120 s) bounds the whole call. When it runs out, finished pages are returned and pages still in flight get a "document time budget exceeded" marker.
 - **Tier 0/1 failures:** if rendering fails or returns nothing in stage 1, the page also goes to the fallback chain (tier 1 → tier 0).
+- **Worker recycling:** shared workers are replaced after `PDF_ROUTER_WORKER_MAX_TASKS` tasks (`max_tasks_per_child`). A replacement costs ~1.2 s plus the model load, so the default of 200 keeps it rare. Docling workers are not recycled: a restart costs 8–20 s, and that pool has its own reset on timeout.
 
 ### Classification rules (`classify.py`)
 
@@ -311,4 +312,6 @@ A script (since removed; it is in commit `5b4d6dfc` and needs a paid API key) ra
 
 The first PDF in a process also pays ~1.2 s per worker to start (`spawn` re-imports the `gpt_researcher` package).
 
-Memory per process (resident): shared worker ~260 MB at start, ~650 MB after parsing, ~1.2 GB once it has run OCR; Docling worker ~1.3 GB.
+Memory per process (resident): shared worker ~260 MB at start, ~650–870 MB after parsing text PDFs, ~830–900 MB once it has also run OCR; Docling worker ~1.3 GB.
+
+**Tried and rejected (2026-10-25): a dedicated OCR pool.** The idea was to keep OCR's models out of the shared workers by sending scanned pages to their own one-worker pool. Measured on the same machine, same documents: the 38-page scan went from 54.4 s to 62.5 s (four shared workers doing OCR were only 13% faster than one, so contention is real, but one worker still loses), and the six-URL peak went from 3.32 GB to 4.15 GB, because OCR adds only ~200–300 MB to a shared worker while the extra process holds ~1.1 GB and sits idle between scans. Reverted; an OCR worker that shuts down when idle is on the "another week" list.
