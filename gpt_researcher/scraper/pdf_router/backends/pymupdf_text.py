@@ -23,7 +23,7 @@ def render_page(page: pymupdf.Page, *, tables: bool) -> str:
     inside it, or the first block below it in the same column. Lines inside a
     region are dropped.
     """
-    if getattr(page, "layout_information", None) is None:
+    if getattr(page, "layout_information", None) is None and hasattr(page, "get_layout"):
         page.get_layout()  # not classified in this process yet (e.g. a fallback)
     regions = []  # (rect, markdown)
     if tables:

@@ -58,7 +58,7 @@ flowchart LR
 
 ## Turning it off
 
-**What's optional:** `pymupdf` 2.0 already installs pymupdf4llm and the layout model, so tiers 0–2 always work. Only OCR (`rapidocr`, or a system Tesseract) and Docling are optional: `pip install "gpt-researcher[pdf-router]"`. Without them, scanned pages come back as `page N: not extracted` markers. Docling checks the Hugging Face Hub for its models every time a converter starts, so offline deployments need `HF_HUB_OFFLINE=1`.
+**What's optional:** `pymupdf` 2.0 already installs pymupdf4llm and the layout model, so tiers 0–2 always work (on an older PyMuPDF without `Page.get_layout`, the router degrades to tier 0 and logs one warning). Only OCR (`rapidocr`, or a system Tesseract) and Docling are optional: `pip install "gpt-researcher[pdf-router]"`. Without them, scanned pages come back as `page N: not extracted` markers. Docling checks the Hugging Face Hub for its models every time a converter starts, so offline deployments need `HF_HUB_OFFLINE=1`.
 
 `PDF_ROUTER_ENABLED=false` sends PDFs back through the old path: one `PyMuPDFLoader` pass over the whole file, joined with `\n`. Other settings: `PDF_ROUTER_MAX_WORKERS` (default `min(4, cpu)`), `PDF_ROUTER_DOCLING_CONCURRENCY` (default 1), `PDF_ROUTER_DOC_TIMEOUT_S` (default 120) and `PDF_ROUTER_WORKER_MAX_TASKS` (default 200: a shared worker is replaced after that many tasks, which releases memory the native libraries never hand back; 0 = never).
 

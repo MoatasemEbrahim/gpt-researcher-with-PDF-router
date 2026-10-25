@@ -41,9 +41,8 @@ class PyMuPDFScraper:
         Returns:
           tuple: (content, image URLs, title); ("", [], "") on any error.
         """
-        # Imported here, not at module level: the router loads PyMuPDF, its layout
-        # model and pymupdf4llm (~0.4 s, ~150 MB), which every process that imports
-        # gpt_researcher.scraper would otherwise pay before it ever sees a PDF.
+        # Imported on first use: the router loads PyMuPDF and its models (~0.4 s, ~150 MB),
+        # a cost that importing the scraper must not carry.
         from .. import pdf_router
 
         try:

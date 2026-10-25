@@ -192,3 +192,14 @@ def test_ocr_flag_only_affects_scans():
     for overrides in ({}, {"back_jump_ratio": 0.3}, {"tables": 1}, {"garbage": 0.1}, {"pictures": 1}):
         signals = _signals(**overrides)
         assert classify(signals, scan_ocr_available=False) == classify(signals, scan_ocr_available=True)
+
+
+def test_older_pymupdf_without_get_layout_still_classifies(monkeypatch):
+    monkeypatch.delattr(pymupdf.Page, "get_layout")  # PyMuPDF 1.26.0 has no get_layout at all
+    doc = pymupdf.open(FIXTURES_DIR / "borderless-table.pdf")
+
+    signals = compute_signals(doc[4])
+
+    assert (signals.tables, signals.pictures) == (0, 0)
+    assert signals.chars > 1000
+    assert classify(signals, **WITH_OCR) == Tier.PLAIN

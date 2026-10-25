@@ -136,3 +136,11 @@ def test_docling_parses_non_contiguous_pages_in_one_call():
     assert SCAN_SENTENCE in _collapse(result[2])
     assert "Table 3: Perplexity" not in result[2] and "Table 3: Perplexity" in result[4]
     assert "<!-- image -->" not in result[2] + result[4]  # our marker, not Docling's
+
+
+def test_plain_tier_works_on_older_pymupdf_without_get_layout(monkeypatch):
+    monkeypatch.delattr(pymupdf.Page, "get_layout")  # PyMuPDF 1.26.0 has no get_layout at all
+
+    markdown = BACKENDS[Tier.PLAIN].parse(_fixture("two-column-paper.pdf"), [0])[0]
+
+    assert "We introduce a new language representation model called BERT" in markdown

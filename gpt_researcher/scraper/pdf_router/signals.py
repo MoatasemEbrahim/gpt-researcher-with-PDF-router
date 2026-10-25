@@ -82,7 +82,9 @@ def back_jump_ratio(line_boxes: list[pymupdf.Rect], middle: float) -> float:
 def layout_regions(page: pymupdf.Page) -> tuple[int, int]:
     """(tables, pictures) found by PyMuPDF's layout model. The result stays on page.layout_information."""
     global _warned_no_layout
-    page.get_layout()  # a no-op when the pymupdf-layout package is missing
+    get_layout = getattr(page, "get_layout", None)  # absent on older PyMuPDF (1.26.0 has none)
+    if get_layout is not None:
+        get_layout()  # a no-op when the pymupdf-layout package is missing
     regions = getattr(page, "layout_information", None)
     if regions is None:
         if not _warned_no_layout:

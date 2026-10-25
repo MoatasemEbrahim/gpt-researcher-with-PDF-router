@@ -25,9 +25,13 @@ from .types import PageOutcome, RouterResult, Tier
 
 logger = logging.getLogger(__name__)
 
-# Pages per worker task. Measured warm with 4 workers (RoBERTa 13 pp / BERT 16 pp):
-# 4 -> 3.0 / 2.4 s, 2 -> 1.9 / 1.8 s, 1 -> 1.8 / 1.8 s. 2 keeps nearly all the gain
-# and sends half as many copies of the PDF to the workers.
+# Pages per worker task. Pages cost very different amounts (text ~8 ms, a table page
+# ~350 ms, a scan ~1.6 s), so small chunks spread the expensive pages across workers.
+# Measured warm with 4 workers, whole document, RoBERTa (13 pages) / BERT (16 pages):
+#   4 pages per task: 3.0 s / 2.4 s
+#   2 pages per task: 1.9 s / 1.8 s
+#   1 page per task:  1.8 s / 1.8 s
+# 2 keeps nearly all of the gain and sends the workers half as many copies of the PDF as 1 would.
 CHUNK_PAGES = 2
 DOCLING_TIMEOUT_BASE_S = 30.0
 DOCLING_TIMEOUT_PER_PAGE_S = 10.0
