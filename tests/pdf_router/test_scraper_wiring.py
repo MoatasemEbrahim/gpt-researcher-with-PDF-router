@@ -12,7 +12,7 @@ from gpt_researcher.scraper.pdf_router import RouterResult, executors
 from gpt_researcher.scraper.pymupdf import pymupdf as scraper_module
 from gpt_researcher.scraper.pymupdf.pymupdf import PyMuPDFScraper
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests/fixtures/pdf
 PDF_BYTES = b"%PDF-1.7 fake bytes, split across chunks"
 
 

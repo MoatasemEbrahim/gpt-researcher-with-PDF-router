@@ -2,7 +2,7 @@
 
 Each fixture is routed with the real process pools. The test checks the backend
 each page used (so a routing change shows up here) and the golden snippets in
-tests/pdf_golden.py. Scans need an OCR engine or Docling; without either (CI's
+tests/pdf_router/golden.py. Scans need an OCR engine or Docling; without either (CI's
 plain install) the scan becomes a page marker.
 """
 
@@ -13,9 +13,9 @@ import pytest
 
 from gpt_researcher.scraper.pdf_router import Tier, executors, route_pdf
 from gpt_researcher.scraper.pdf_router.backends import BACKENDS, scan_ocr_available
-from tests.pdf_golden import check, collapse
+from tests.pdf_router.golden import check, collapse
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests/fixtures/pdf
 SCAN = "scan"  # stands for whichever backend reads scans here
 PLAIN, TABLES = "plain", "pymupdf_tables"
 

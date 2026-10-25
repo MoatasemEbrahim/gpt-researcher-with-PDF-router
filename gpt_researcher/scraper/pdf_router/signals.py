@@ -1,7 +1,7 @@
 """Per-page signals for routing: one text extraction, image info, and PyMuPDF's layout model.
 
 Definitions and thresholds come from probing the fixtures with
-tests/pdf_fixture_probe.py (see DECISIONS.md).
+tests/pdf_router/tools/probe.py (see DECISIONS.md).
 """
 
 import logging

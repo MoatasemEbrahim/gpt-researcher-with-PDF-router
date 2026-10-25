@@ -6,7 +6,7 @@ What was built, what was measured, and what was rejected. Design diagrams, per-f
 
 - `PyMuPDFScraper.scrape()` ran one extractor over the whole file. Both ways in (`get_scraper()` for `.pdf` URLs, `Scraper._retry_as_pdf()` for HTML scrapers that got PDF bytes) go through it, so it is the one change point. Every exception became `("", [], "")`, which the `Scraper` then drops as "too short": a scanned PDF vanished from the research silently.
 - Measured on the fixtures, today's extractor fails 10 of 17 golden checks: an empty file for the scan, the scanned page missing from the mixed document, tables flattened one cell per line, figure labels dumped as text, the arXiv margin stamp landing mid-sentence, no headings.
-- **Fixture corrections:** the two arXiv papers do *not* interleave columns (LaTeX stores text column by column), and RoBERTa is two-column, not single-column. None of the supplied fixtures stores text out of reading order, so a fifth fixture was generated (`tests/fixtures/pdf/out-of-order-columns.pdf`) whose text is stored row by row across both columns, the way some Word and browser exports do it.
+- **Fixture corrections:** the two arXiv papers do *not* interleave columns (LaTeX stores text column by column), and RoBERTa is two-column, not single-column. None of the supplied fixtures stores text out of reading order, so a fifth fixture was generated (`tests/fixtures/pdf/out-of-order-columns.pdf`; its generator is in commit `0ad912ed`) whose text is stored row by row across both columns, the way some Word and browser exports do it.
 
 ## Classification: cheap signals, evaluated in order
 

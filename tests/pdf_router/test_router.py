@@ -17,7 +17,7 @@ import pytest
 from gpt_researcher.scraper.pdf_router import Tier, executors, route_pdf, router
 from gpt_researcher.scraper.pdf_router.backends import BACKENDS
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests/fixtures/pdf
 
 
 def _pdf(pages: int) -> bytes:

@@ -15,7 +15,7 @@ from gpt_researcher.scraper.pdf_router.backends import BACKENDS, FIGURE_MARKER
 from gpt_researcher.scraper.pdf_router.backends.pymupdf_text import render_page
 from gpt_researcher.scraper.pdf_router.types import Tier
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests/fixtures/pdf
 SCAN_SENTENCE = "Permit me to introduce you to the facility of facsimile transmission."
 
 

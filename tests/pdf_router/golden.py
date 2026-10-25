@@ -1,6 +1,6 @@
 """Golden snippets for the PDF fixtures: what a person reads on the page (PLAN section 8).
 
-Shared by tests/test_pdf_router_fixtures.py and `tests/pdf_fixture_probe.py --router`,
+Shared by tests/pdf_router/test_fixtures.py and `tests/pdf_router/tools/probe.py --router`,
 so the tests and the before/after comparison judge outputs the same way.
 """
 

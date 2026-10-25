@@ -1,7 +1,7 @@
 """Signals and classification for the PDF page router.
 
-Most tests build a tiny PDF in memory (the same way as
-tests/make_out_of_order_fixture.py). Table and figure detection comes from
+Most tests build a tiny PDF in memory (with PyMuPDF, the way the
+out-of-order fixture was made). Table and figure detection comes from
 PyMuPDF's layout model, which needs real pages, so those tests use the
 committed fixtures.
 """
@@ -14,7 +14,7 @@ import pytest
 
 from gpt_researcher.scraper.pdf_router import PageSignals, Tier, classify, compute_signals
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pdf"
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests/fixtures/pdf
 WIDTH, HEIGHT = 595, 842  # A4
 LEFT_X, RIGHT_X = 54, 320
 TOP, LEADING = 100, 13

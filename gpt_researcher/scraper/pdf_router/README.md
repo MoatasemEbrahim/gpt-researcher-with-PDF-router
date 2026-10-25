@@ -183,6 +183,8 @@ flowchart TD
 
 ### `out-of-order-columns.pdf` (1 page, generated: two columns stored row by row)
 
+Made with PyMuPDF by writing a two-column page one visual row at a time (left line 1, right line 1, left line 2, …), the way some Word and browser exports store text. The generator script was removed once the PDF was committed; it is in commit `0ad912ed`.
+
 ```mermaid
 flowchart TD
     P1["p1: back_jump_ratio 0.344<br/>tables 0, pictures 0"] --> T2["Tier 2: pymupdf4llm<br/>~210 ms warm"]
@@ -238,7 +240,7 @@ flowchart TD
 
 ## Before / after (this Mac)
 
-Golden snippets passed (`tests/pdf_golden.py`, what a person reads on the page) and time per document. "Today" is `PyMuPDFScraper` before the router (`PDF_ROUTER_ENABLED=false`). Router times are warm. Docling times start a new converter per file, so they include its start-up. The full per-check table is in `tests/fixtures/pdf/probe-output/comparison.md`, regenerated with `python tests/pdf_fixture_probe.py --docling --router`.
+Golden snippets passed (`tests/pdf_router/golden.py`, what a person reads on the page) and time per document. "Today" is `PyMuPDFScraper` before the router (`PDF_ROUTER_ENABLED=false`). Router times are warm. Docling times start a new converter per file, so they include its start-up. The full per-check table is in `tests/fixtures/pdf/probe-output/comparison.md`, regenerated with `python tests/pdf_router/tools/probe.py --docling --router`.
 
 | Fixture | Pages | Today | Router | Docling |
 | --- | --- | --- | --- | --- |
@@ -255,7 +257,7 @@ The router matches Docling on every check at 4–10× less time. It's slower tha
 
 ## End to end with real URLs
 
-Through the real `Scraper` (the path a research step uses, quality gates included), run with `python tests/pdf_router_e2e.py`. Details: `probe-output/e2e-mac.md`, `e2e-linux-docker.md`.
+Through the real `Scraper` (the path a research step uses, quality gates included), run with `python tests/pdf_router/tools/e2e.py`. Details: `probe-output/e2e-mac.md`, `e2e-linux-docker.md`.
 
 | URL | Mac | Linux (Docker) | Result |
 | --- | --- | --- | --- |
@@ -280,7 +282,7 @@ OCR costs ~1.8 s a page here, so the default 120 s document budget covers about 
 
 ### One research run, before and after
 
-`python tests/pdf_router_research_run.py` runs `GPTResearcher` on exactly BERT's and RoBERTa's PDFs (no web search), once with the router and once without. Query: "How does RoBERTa change BERT's pre-training, and how much do those changes matter on SQuAD and MNLI?" Reports and the number check: `probe-output/research-*.md`.
+A script (since removed; it is in commit `5b4d6dfc` and needs a paid API key) ran `GPTResearcher` on exactly BERT's and RoBERTa's PDFs (no web search), once with the router and once without. Query: "How does RoBERTa change BERT's pre-training, and how much do those changes matter on SQuAD and MNLI?" Reports and the number check: `probe-output/research-*.md`.
 
 - **Both reports are correct on the numbers they quote,** for example RoBERTa 94.6 / 89.4 / 90.2 against BERT-large 90.9 / 81.8 / 86.6. The report without the router even rebuilt RoBERTa's Table 2 exactly.
 - **On these two papers the router made no visible difference.** In these LaTeX PDFs, today's extractor keeps table cells in reading order, one per line, and the model can rebuild the table from that.
