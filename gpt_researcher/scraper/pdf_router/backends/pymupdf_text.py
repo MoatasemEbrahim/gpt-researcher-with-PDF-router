@@ -4,6 +4,7 @@ Both share render_page(), which works on an open page so the worker that
 classified the page can reuse its layout-model result.
 """
 
+from collections import Counter
 from contextlib import contextmanager
 
 import pymupdf
@@ -45,14 +46,16 @@ def render_page(page: pymupdf.Page, *, tables: bool) -> str:
             emitted.add(index)
             parts.append(regions[index][1])
 
-    for block in page.get_text("dict", flags=TEXT_FLAGS)["blocks"]:
+    blocks = page.get_text("dict", flags=TEXT_FLAGS)["blocks"]
+    direction = _dominant_direction(blocks)
+    for block in blocks:
         block_rect = pymupdf.Rect(block["bbox"])
         for index, (rect, _markdown) in enumerate(regions):
             if rect.y1 <= block_rect.y0 and min(rect.x1, block_rect.x1) > max(rect.x0, block_rect.x0):
                 emit(index)
         paragraph = []
         for line in block.get("lines", []):
-            if abs(line["dir"][1]) > 0.1:  # rotated, e.g. the arXiv margin stamp
+            if _direction(line) != direction:  # set against the page's text, e.g. the arXiv margin stamp
                 continue
             text = "".join(span["text"] for span in line["spans"]).strip()
             if not text:
@@ -80,6 +83,31 @@ def _region_of(line_rect: pymupdf.Rect, regions: list) -> int | None:
         if rect.contains(centre):
             return index
     return None
+
+
+def _direction(line: dict) -> tuple[int, int]:
+    """A line's writing direction snapped to an axis: (1, 0) left to right, (0, ±1) sideways, (0, 0) diagonal."""
+    dx, dy = line["dir"]
+    if abs(dy) <= 0.1:
+        return (1 if dx >= 0 else -1, 0)
+    if abs(dx) <= 0.1:
+        return (0, 1 if dy >= 0 else -1)
+    return (0, 0)
+
+
+def _dominant_direction(blocks: list) -> tuple[int, int]:
+    """The direction most of the page's characters are written in.
+
+    Lines written in any other direction are dropped. On a normal page that is
+    the arXiv margin stamp or a watermark. On a page set sideways (a landscape
+    table in a portrait document) it is the page number, and the sideways text,
+    which the old rule threw away, is kept.
+    """
+    chars = Counter()
+    for block in blocks:
+        for line in block.get("lines", []):
+            chars[_direction(line)] += sum(len(span["text"]) for span in line["spans"])
+    return max(chars, key=chars.get) if chars else (1, 0)
 
 
 def _join_lines(lines: list[str]) -> str:

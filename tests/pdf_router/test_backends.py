@@ -52,6 +52,25 @@ def test_plain_drops_margin_stamp_and_expands_ligatures():
     assert "fine-tuning" in markdown
 
 
+def test_sideways_page_keeps_its_text_and_drops_the_page_number():
+    """A landscape table set sideways in a portrait page: the text is rotated 90 degrees, the page number is not.
+
+    The old rule dropped every rotated line, so such a page came back empty and got a marker.
+    """
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    for row in range(12):
+        point = pymupdf.Point(100 + row * 14, 780)
+        page.insert_text(point, f"Row {row}: model A 91.{row} model B 88.{row}", fontsize=9, morph=(point, pymupdf.Matrix(90)))
+    page.insert_text((270, 820), "Page 42 of 60", fontsize=9)  # horizontal page furniture
+
+    markdown = BACKENDS[Tier.PLAIN].parse(doc.tobytes(), [0])[0]
+
+    assert "Row 0: model A 91.0 model B 88.0" in markdown
+    assert "Row 11:" in markdown
+    assert "Page 42" not in markdown
+
+
 def test_figure_text_becomes_a_marker_and_caption_stays():
     markdown = BACKENDS[Tier.PLAIN].parse(_fixture("two-column-paper.pdf"), [2])[2]
 

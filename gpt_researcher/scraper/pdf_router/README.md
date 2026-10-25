@@ -155,7 +155,7 @@ flowchart TD
     F -->|"yes"| G["emit that region once:<br/>table Markdown or figure marker"]
     F -->|"no"| H
     G --> H{"for each line"}
-    H -->|"rotated"| I["drop"]
+    H -->|"not in the page's main writing direction<br/>(margin stamp, watermark)"| I["drop"]
     H -->|"centre inside a region"| J["drop the line, emit the region once"]
     H -->|"otherwise"| K["add to the paragraph<br/>join a line-end hyphen before lowercase"]
     K --> L["paragraphs joined by a blank line;<br/>regions never emitted are appended at the end"]
