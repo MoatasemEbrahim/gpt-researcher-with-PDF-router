@@ -5,8 +5,10 @@ threads see the monkeypatched registry, worker processes wouldn't. The last test
 runs the real pools on a fixture.
 """
 
+import glob
 import os
 import re
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +21,10 @@ from gpt_researcher.scraper.pdf_router import Tier, executors, route_pdf, router
 from gpt_researcher.scraper.pdf_router.backends import BACKENDS
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests/fixtures/pdf
+
+
+def _temp_pdfs() -> set:
+    return set(glob.glob(os.path.join(tempfile.gettempdir(), "*.pdf")))
 
 
 def _pdf(pages: int) -> bytes:
@@ -204,6 +210,46 @@ def test_the_document_budget_is_respected(fake, monkeypatch):
     assert time.perf_counter() - started < 1.0
     assert _parts(result.markdown)[0] == "<!-- page 1: not extracted (document time budget exceeded) -->"
     assert _parts(result.markdown)[1:] == ["stage1 PLAIN page 1", "stage1 PLAIN page 2"]
+
+
+def test_pages_over_the_page_limit_are_left_out_and_marked(fake, monkeypatch):
+    monkeypatch.setenv("PDF_ROUTER_MAX_PAGES", "2")
+
+    result = route_pdf(_pdf(5), "https://example.com/a.pdf")
+
+    assert _parts(result.markdown) == [
+        "stage1 PLAIN page 0",
+        "stage1 PLAIN page 1",
+        "<!-- pages 3-5: not extracted (over the 2-page limit) -->",
+    ]
+    assert len(result.pages) == 2
+
+
+def test_the_workers_get_a_temp_file_that_is_removed_afterwards(fake, monkeypatch):
+    seen = []
+    monkeypatch.setattr(router, "_stage1", lambda path, numbers, ocr: (seen.append(path), [(n, Tier.PLAIN, f"p{n}", 1.0, "") for n in numbers])[1])
+    before = _temp_pdfs()
+
+    route_pdf(_pdf(2), "https://example.com/a.pdf")
+
+    assert len(seen) == 1 and seen[0].endswith(".pdf") and not os.path.exists(seen[0])
+    assert _temp_pdfs() == before
+
+
+def test_the_temp_file_is_removed_when_the_pdf_cannot_be_opened():
+    before = _temp_pdfs()
+
+    with pytest.raises(Exception):
+        route_pdf(b"%PDF-1.4 not a real pdf", "https://example.com/broken.pdf")
+
+    assert _temp_pdfs() == before
+
+
+def test_zero_page_limit_means_every_page(monkeypatch):
+    monkeypatch.setenv("PDF_ROUTER_MAX_PAGES", "0")
+    assert settings.max_pages() is None
+    monkeypatch.delenv("PDF_ROUTER_MAX_PAGES")
+    assert settings.max_pages() == 200
 
 
 def test_a_queued_docling_job_does_not_time_out(fake, monkeypatch):

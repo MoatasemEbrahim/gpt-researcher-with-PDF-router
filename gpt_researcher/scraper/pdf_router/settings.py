@@ -30,6 +30,15 @@ def docling_concurrency() -> int:
     return int(os.environ.get("PDF_ROUTER_DOCLING_CONCURRENCY", "1"))
 
 
+def max_pages() -> int | None:
+    """Pages routed per PDF, from PDF_ROUTER_MAX_PAGES (default 200; 0 = all of them).
+
+    Classification costs ~150 ms a page, so 200 pages is ~8 s of pool time with 4 workers.
+    The pages past the limit are left out, and one marker at the end says so.
+    """
+    return int(os.environ.get("PDF_ROUTER_MAX_PAGES", "200")) or None
+
+
 def doc_timeout_s() -> float:
     """Time budget for one PDF. When it runs out, finished pages are returned and the rest are marked."""
     return float(os.environ.get("PDF_ROUTER_DOC_TIMEOUT_S", "120"))

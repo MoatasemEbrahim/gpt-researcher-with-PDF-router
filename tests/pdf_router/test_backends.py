@@ -19,8 +19,15 @@ FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests
 SCAN_SENTENCE = "Permit me to introduce you to the facility of facsimile transmission."
 
 
-def _fixture(name: str) -> bytes:
-    return (FIXTURES_DIR / name).read_bytes()
+def _fixture(name: str) -> str:
+    """Backends take a file path (the router's temp file); the fixtures are files already."""
+    return str(FIXTURES_DIR / name)
+
+
+def _saved(doc: pymupdf.Document, tmp_path: Path) -> str:
+    path = tmp_path / "page.pdf"
+    doc.save(path)
+    return str(path)
 
 
 def _collapse(text: str) -> str:
@@ -30,7 +37,7 @@ def _collapse(text: str) -> str:
 # --- tiers 0 and 1 ---
 
 
-def test_hyphen_at_line_end_is_joined_only_before_lowercase():
+def test_hyphen_at_line_end_is_joined_only_before_lowercase(tmp_path):
     doc = pymupdf.open()
     page = doc.new_page()
     for row, text in enumerate(["We introduce a new language repre-", "sentation model called BERT."]):
@@ -38,7 +45,7 @@ def test_hyphen_at_line_end_is_joined_only_before_lowercase():
     for row, text in enumerate(["Part One of Section-", "Two describes it."]):
         page.insert_text((72, 300 + row * 12), text, fontname="helv", fontsize=10)
 
-    markdown = BACKENDS[Tier.PLAIN].parse(doc.tobytes(), [0])[0]
+    markdown = BACKENDS[Tier.PLAIN].parse(_saved(doc, tmp_path), [0])[0]
 
     assert "language representation model" in markdown
     assert "Section- Two" in markdown
@@ -52,7 +59,7 @@ def test_plain_drops_margin_stamp_and_expands_ligatures():
     assert "fine-tuning" in markdown
 
 
-def test_sideways_page_keeps_its_text_and_drops_the_page_number():
+def test_sideways_page_keeps_its_text_and_drops_the_page_number(tmp_path):
     """A landscape table set sideways in a portrait page: the text is rotated 90 degrees, the page number is not.
 
     The old rule dropped every rotated line, so such a page came back empty and got a marker.
@@ -64,7 +71,7 @@ def test_sideways_page_keeps_its_text_and_drops_the_page_number():
         page.insert_text(point, f"Row {row}: model A 91.{row} model B 88.{row}", fontsize=9, morph=(point, pymupdf.Matrix(90)))
     page.insert_text((270, 820), "Page 42 of 60", fontsize=9)  # horizontal page furniture
 
-    markdown = BACKENDS[Tier.PLAIN].parse(doc.tobytes(), [0])[0]
+    markdown = BACKENDS[Tier.PLAIN].parse(_saved(doc, tmp_path), [0])[0]
 
     assert "Row 0: model A 91.0 model B 88.0" in markdown
     assert "Row 11:" in markdown
@@ -98,7 +105,7 @@ def test_plain_tier_has_no_markdown_table():
 
 
 def test_tables_tier_reuses_the_layout_result(monkeypatch):
-    doc = pymupdf.open(stream=_fixture("borderless-table.pdf"))
+    doc = pymupdf.open(_fixture("borderless-table.pdf"))
     page = doc[4]
     page.get_layout()  # as classification does
     calls = []

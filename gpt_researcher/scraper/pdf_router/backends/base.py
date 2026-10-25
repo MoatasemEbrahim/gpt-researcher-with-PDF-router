@@ -16,10 +16,11 @@ class PageBackend(Protocol):
         """Whether this backend can run here (optional packages installed)."""
         ...
 
-    def parse(self, pdf: bytes, pages: list[int]) -> dict[int, str]:
+    def parse(self, path: str, pages: list[int]) -> dict[int, str]:
         """Markdown for each requested page (0-based page number -> Markdown).
 
-        Takes only picklable arguments, so it can run in another process, and
-        opens its own copy of the document.
+        path is the PDF file the router wrote for its workers; open it with
+        pymupdf.open(path). Takes only picklable arguments, so it can run in
+        another process, and opens its own copy of the document.
         """
         ...

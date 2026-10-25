@@ -8,8 +8,9 @@ raises) left the temp file behind on disk every time. The exception is then
 swallowed by the broad ``except``, so the leak was silent.
 
 That loader path now runs only with ``PDF_ROUTER_ENABLED=false``. By default the
-PDF is read into memory and goes through the page router, which writes no temp
-file; a broken PDF must still give the empty result and leave nothing behind.
+PDF is read into memory and goes through the page router, which writes its own
+temp file for its workers and removes it when the call ends; a broken PDF must
+still give the empty result and leave nothing behind.
 """
 
 import os
@@ -26,6 +27,9 @@ class _FakeResponse:
 
     def iter_content(self, chunk_size=8192):
         yield b"%PDF-1.4 not-a-real-pdf"
+
+    def close(self):
+        return None
 
 
 def _temp_pdfs() -> set:

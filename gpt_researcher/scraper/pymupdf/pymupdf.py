@@ -38,6 +38,9 @@ class PyMuPDFScraper:
         returns it as Markdown. Each page goes through the PDF page router (see pdf_router/README.md),
         or, with PDF_ROUTER_ENABLED=false, through PyMuPDFLoader as before.
 
+        The router takes the PDF's bytes (held in memory once, here) and writes them to its own
+        temp file for its workers, so nothing is copied per page.
+
         Returns:
           tuple: (content, image URLs, title); ("", [], "") on any error.
         """
@@ -74,9 +77,13 @@ class PyMuPDFScraper:
 
     def _read_pdf(self) -> bytes:
         """The PDF's bytes, downloaded in memory or read from the local file."""
-        if self.is_url():
-            return b"".join(self._download().iter_content(chunk_size=8192))
-        return Path(self.link).read_bytes()
+        if not self.is_url():
+            return Path(self.link).read_bytes()
+        response = self._download()
+        try:
+            return b"".join(response.iter_content(chunk_size=8192))
+        finally:
+            response.close()
 
     def _scrape_with_loader(self) -> tuple[str, list[str], str]:
         """Legacy path: one extractor for the whole file (PDF_ROUTER_ENABLED=false)."""

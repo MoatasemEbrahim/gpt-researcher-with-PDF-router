@@ -31,11 +31,11 @@ class DoclingBackend:
     def available(self) -> bool:
         return importlib.util.find_spec("docling") is not None
 
-    def parse(self, pdf: bytes, pages: list[int]) -> dict[int, str]:
+    def parse(self, path: str, pages: list[int]) -> dict[int, str]:
         from docling.datamodel.base_models import DocumentStream
 
         # One Docling call for all the pages, even when they aren't contiguous.
-        with pymupdf.open(stream=pdf, filetype="pdf") as doc, pymupdf.open() as subset:
+        with pymupdf.open(path) as doc, pymupdf.open() as subset:
             for number in pages:
                 subset.insert_pdf(doc, from_page=number, to_page=number)
             subset_pdf = subset.tobytes()

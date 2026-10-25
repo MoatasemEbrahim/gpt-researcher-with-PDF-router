@@ -1,6 +1,9 @@
 """PyMuPDFScraper hands the PDF's bytes to the page router and keeps its (content, images, title) contract."""
 
+import glob
+import os
 import re
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,12 +20,21 @@ PDF_BYTES = b"%PDF-1.7 fake bytes, split across chunks"
 
 
 class _FakeResponse:
+    def __init__(self, chunks=None):
+        self.chunks = chunks if chunks is not None else [PDF_BYTES[:10], PDF_BYTES[10:]]
+        self.closed = False
+
     def raise_for_status(self):
         return None
 
     def iter_content(self, chunk_size=8192):
-        yield PDF_BYTES[:10]
-        yield PDF_BYTES[10:]
+        for chunk in self.chunks:
+            if isinstance(chunk, Exception):
+                raise chunk
+            yield chunk
+
+    def close(self):
+        self.closed = True
 
 
 def _fake_router(calls):
@@ -33,15 +45,23 @@ def _fake_router(calls):
     return route_pdf
 
 
-def test_url_bytes_go_to_the_router(monkeypatch):
+def _temp_pdfs() -> set:
+    return set(glob.glob(os.path.join(tempfile.gettempdir(), "*.pdf")))
+
+
+def test_url_bytes_go_to_the_router_and_the_response_is_closed(monkeypatch):
     calls = []
     monkeypatch.setattr(pdf_router, "route_pdf", _fake_router(calls))
+    response = _FakeResponse()
+    before = _temp_pdfs()
 
-    with patch.object(scraper_module.requests, "get", return_value=_FakeResponse()):
+    with patch.object(scraper_module.requests, "get", return_value=response):
         result = PyMuPDFScraper("https://example.com/paper.pdf").scrape()
 
     assert result == ("# Routed markdown", [], "A title")
     assert calls == [(PDF_BYTES, "https://example.com/paper.pdf")]
+    assert response.closed
+    assert _temp_pdfs() == before  # the scraper writes no file of its own; the router owns its temp file
 
 
 def test_local_file_bytes_go_to_the_router(monkeypatch, tmp_path):
@@ -73,6 +93,19 @@ def test_ssl_retry_still_works(monkeypatch):
 
     assert result[0] == "# Routed markdown"
     assert calls[0][0] == PDF_BYTES
+
+
+def test_a_download_that_breaks_midway_gives_the_empty_result(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pdf_router, "route_pdf", _fake_router(calls))
+    response = _FakeResponse(chunks=[PDF_BYTES[:10], requests.exceptions.ConnectionError("connection dropped")])
+
+    with patch.object(scraper_module.requests, "get", return_value=response):
+        result = PyMuPDFScraper("https://example.com/paper.pdf").scrape()
+
+    assert result == ("", [], "")
+    assert calls == []
+    assert response.closed
 
 
 def test_router_disabled_uses_the_legacy_loader(monkeypatch, tmp_path):

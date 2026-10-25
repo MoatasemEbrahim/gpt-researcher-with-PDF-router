@@ -31,6 +31,7 @@ What was built, what was measured, and what was rejected. Design diagrams, per-f
 ## Parallelism and its constraints
 
 - Workers are processes, not threads: PyMuPDF isn't thread-safe and the work is CPU-bound. One shared `ProcessPoolExecutor` per process, because the scraper already runs many URLs at once in threads; a pool per PDF would multiply processes. `spawn` on every platform: fork is unsafe once the scraper's threads exist.
+- The router writes the bytes it is given once to a temp file and the workers open it themselves, so no task carries a copy of the PDF; the file is removed when the call ends.
 - Stage 1 runs in the pool in chunks of 2 pages: signals, classify, and tiers 0–1 rendered right there, reusing the page's layout result (`find_tables()` would otherwise run the model a second time: 240 → 30–90 ms). Stage 2 sends tier-2 chunks to the same pool and all tier-3 pages to a dedicated Docling pool in one call, after every page is classified.
 - A process-wide Docling slot (`PDF_ROUTER_DOCLING_CONCURRENCY`, default 1) caps running Docling jobs across all PDFs. A job's timeout starts when it holds a slot, not while it queues behind another PDF's job; otherwise a healthy job could time out and its reset would kill the other job.
 - Measured: a 16-page paper in 1.8 s warm; six arXiv URLs at once through the real `Scraper` in 18 s with a 3.4 GB peak (Linux: 54 s, 2.8 GB, identical output). Memory per shared worker: ~260 MB at start, ~650–870 MB after parsing text PDFs, ~830–900 MB once it has also run OCR; the Docling worker ~1.3 GB. Each spawned worker re-imports the package (~1.2 s), paid once per worker.
@@ -68,11 +69,11 @@ What was built, what was measured, and what was rejected. Design diagrams, per-f
 - `back_jump_ratio` fires on grids, not only on broken order: GPT-3 sent 14 of 75 pages to tier 2 (tables, an author grid, example boxes, references). The cost is fine; whether tier 2's tables match tier 1's on those pages is unverified.
 - `find_tables` merges cells on RoBERTa's largest results table; rows survive, some columns are combined.
 - Timed-out work in the shared pool keeps running; stopping a Docling job uses the pool's private `_processes`, and with more than one Docling worker a reset kills the other PDFs' jobs too.
-- The whole PDF is held in memory and copied to the workers per chunk; no size limit, as before. Four workers can reach ~3.7 GB.
+- No size limit on the download, as before; the scraper holds it in memory once. `PDF_ROUTER_MAX_PAGES` (200) bounds the pages routed; the rest is marked. On Windows a worker still reading the router's temp file at the deadline leaves it behind. Four workers can reach ~3.7 GB.
 - The 120 s budget covers ~65 scanned pages at ~1.8 s each. Linux in Docker ran 2–3× slower than the Mac, uninvestigated.
 
 ## Another week
 
 - Verify-and-escalate with a per-document cost budget; headings in tier 0 from font size and weight; vision-model descriptions of figures and charts; math to LaTeX.
-- Send workers a temp-file path instead of the bytes; a faster table-to-Markdown path (`table.extract()` is 8 ms but drops decimal points); cache parsed PDFs by content hash; an OCR worker that shuts itself down when idle (the measured objection to the OCR pool was its idle 1.1 GB).
+- A faster table-to-Markdown path (`table.extract()` is 8 ms but drops decimal points); cache parsed PDFs by content hash; an OCR worker that shuts itself down when idle (the measured objection to the OCR pool was its idle 1.1 GB).
 - Route the browser scraper and the document loaders through the router; try pdf_oxide or LiteParse as a licence-friendly engine for tiers 0–2.

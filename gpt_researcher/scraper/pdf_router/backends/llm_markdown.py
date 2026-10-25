@@ -39,13 +39,13 @@ class LlmMarkdownBackend:
     def available(self) -> bool:
         return importlib.util.find_spec("pymupdf4llm") is not None
 
-    def parse(self, pdf: bytes, pages: list[int]) -> dict[int, str]:
+    def parse(self, path: str, pages: list[int]) -> dict[int, str]:
         import pymupdf4llm
 
         pymupdf4llm.use_layout(True)
         # Its parser messages go through pymupdf.message(); keep them out of the output.
         pymupdf.set_messages(pylogging=True, pylogging_level=logging.DEBUG)
-        with pymupdf.open(stream=pdf, filetype="pdf") as doc, contextlib.redirect_stdout(io.StringIO()):
+        with pymupdf.open(path) as doc, contextlib.redirect_stdout(io.StringIO()):
             chunks = pymupdf4llm.to_markdown(
                 doc,
                 pages=pages,

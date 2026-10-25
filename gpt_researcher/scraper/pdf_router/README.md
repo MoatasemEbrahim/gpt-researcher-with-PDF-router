@@ -1,6 +1,6 @@
 # PDF page router
 
-The router classifies each page of a PDF and parses it with the cheapest backend that can handle it. The pages are merged back into one Markdown string, which `PyMuPDFScraper` returns through the existing `(content, image_urls, title)` contract.
+The router classifies each page of a PDF and parses it with the cheapest backend that can handle it. The pages are merged back into one Markdown string, which `PyMuPDFScraper` returns through the existing `(content, image_urls, title)` contract. `route_pdf()` takes the PDF's bytes and writes them once to a temp file that its workers open themselves, so no task carries a copy of the PDF.
 
 The decisions, trade-offs and weak spots are summarised in [`DECISIONS.md`](../../../DECISIONS.md) at the repo root; this file holds the diagrams and the numbers.
 
@@ -49,18 +49,18 @@ flowchart LR
 | `settings.py` | The `PDF_ROUTER_*` environment variables, read at call time |
 | `signals.py` | `compute_signals(page)`: one `get_text("dict")`, image info, and PyMuPDF's layout model (skipped on scans) |
 | `classify.py` | `classify(signals, *, scan_ocr_available)`: a pure rule table |
-| `backends/base.py` | The `PageBackend` protocol (`available()`, `parse(pdf, pages)`) and `FIGURE_MARKER` |
+| `backends/base.py` | The `PageBackend` protocol (`available()`, `parse(path, pages)`) and `FIGURE_MARKER` |
 | `backends/pymupdf_text.py` | `render_page(page, tables=…)`, shared by tiers 0 and 1. `_reuse_layout()` stops `find_tables()` from running the model again |
 | `backends/llm_markdown.py` | Tier 2 (pymupdf4llm) and `scan_ocr_available()` |
 | `backends/docling.py` | Tier 3: one Docling call per document, via a sub-PDF of the routed pages |
-| `router.py` | `route_pdf(pdf, source_url) -> RouterResult`: stage 1, stage 2, the fallback chain, the time budget and the merge |
+| `router.py` | `route_pdf(pdf, source_url) -> RouterResult`: the temp file for the workers, stage 1, stage 2, the fallback chain, the time budget and the merge |
 | `executors.py` | Long-lived pools per process (`spawn`): the shared pool, the Docling pool, the Docling slot, and waiter threads |
 
 ## Turning it off
 
 **What's optional:** `pymupdf` 2.0 already installs pymupdf4llm and the layout model, so tiers 0–2 always work (on an older PyMuPDF without `Page.get_layout`, the router degrades to tier 0 and logs one warning). Only OCR (`rapidocr`, or a system Tesseract) and Docling are optional: `pip install "gpt-researcher[pdf-router]"`. Without them, scanned pages come back as `page N: not extracted` markers. Docling checks the Hugging Face Hub for its models every time a converter starts, so offline deployments need `HF_HUB_OFFLINE=1`.
 
-`PDF_ROUTER_ENABLED=false` sends PDFs back through the old path: one `PyMuPDFLoader` pass over the whole file, joined with `\n`. Other settings: `PDF_ROUTER_MAX_WORKERS` (default `min(4, cpu)`), `PDF_ROUTER_DOCLING_CONCURRENCY` (default 1), `PDF_ROUTER_DOC_TIMEOUT_S` (default 120) and `PDF_ROUTER_WORKER_MAX_TASKS` (default 200: a shared worker is replaced after that many tasks, which releases memory the native libraries never hand back; 0 = never).
+`PDF_ROUTER_ENABLED=false` sends PDFs back through the old path: one `PyMuPDFLoader` pass over the whole file, joined with `\n`. Other settings: `PDF_ROUTER_MAX_WORKERS` (default `min(4, cpu)`), `PDF_ROUTER_DOCLING_CONCURRENCY` (default 1), `PDF_ROUTER_DOC_TIMEOUT_S` (default 120), `PDF_ROUTER_WORKER_MAX_TASKS` (default 200: a shared worker is replaced after that many tasks, which releases memory the native libraries never hand back; 0 = never), and `PDF_ROUTER_MAX_PAGES` (default 200: the pages past it are left out and one marker at the end says so; 0 = all). There is no size limit, as before.
 
 ## How the scraper calls it
 
@@ -82,7 +82,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["PDF bytes + source URL"] --> L["Under MUPDF_LOCK: page count and title"]
+    A["PDF bytes + source URL"] --> W["Write the bytes once to a temp file for the workers<br/>(removed when the call ends)"]
+    W --> L["Under MUPDF_LOCK: page count and title.<br/>Only the first PDF_ROUTER_MAX_PAGES pages are routed"]
     L --> S
     subgraph C1["Stage 1: shared process pool, chunks of 2 pages"]
         S["compute_signals(page)<br/>~8 ms text + ~140 ms layout model"] --> K["classify(signals)"]
@@ -104,6 +105,8 @@ flowchart TD
 
 - **Docling slot:** at most `PDF_ROUTER_DOCLING_CONCURRENCY` Docling jobs run at once, across all PDFs. A job's timeout (30 s + 10 s × pages) starts once it holds a slot, so waiting behind another PDF's job never times it out. On a timeout, the Docling pool is stopped and rebuilt, because a running task can't be cancelled.
 - **Document budget:** `PDF_ROUTER_DOC_TIMEOUT_S` (default 120 s) bounds the whole call. When it runs out, finished pages are returned and pages still in flight get a "document time budget exceeded" marker.
+- **Temp file:** the router writes the bytes once to a temp file and the workers open it themselves (the operating system's page cache shares it), so no task carries a copy of the PDF. The file is removed when the call ends; on Windows a worker still reading it at the deadline makes that removal fail and the file is left behind.
+- **Page limit:** only the first `PDF_ROUTER_MAX_PAGES` (200) pages are routed, with one marker for the rest. It bounds pool time (~150 ms a page to classify) and output size. There is no size limit, as before.
 - **Tier 0/1 failures:** if rendering fails or returns nothing in stage 1, the page also goes to the fallback chain (tier 1 → tier 0).
 - **Worker recycling:** shared workers are replaced after `PDF_ROUTER_WORKER_MAX_TASKS` tasks (`max_tasks_per_child`). A replacement costs ~1.2 s plus the model load, so the default of 200 keeps it rare. Docling workers are not recycled: a restart costs 8–20 s, and that pool has its own reset on timeout.
 

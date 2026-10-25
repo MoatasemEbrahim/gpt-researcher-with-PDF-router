@@ -8,10 +8,13 @@ FALLBACK chain. Everything is bounded by the document time budget.
 """
 
 import logging
+import os
+import tempfile
 import threading
 import time
 from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, BrokenExecutor, Executor, Future, wait
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import pymupdf
@@ -31,7 +34,7 @@ logger = logging.getLogger(__name__)
 #   4 pages per task: 3.0 s / 2.4 s
 #   2 pages per task: 1.9 s / 1.8 s
 #   1 page per task:  1.8 s / 1.8 s
-# 2 keeps nearly all of the gain and sends the workers half as many copies of the PDF as 1 would.
+# 2 keeps nearly all of the gain with half as many tasks as 1.
 CHUNK_PAGES = 2
 DOCLING_TIMEOUT_BASE_S = 30.0
 DOCLING_TIMEOUT_PER_PAGE_S = 10.0
@@ -43,16 +46,26 @@ MUPDF_LOCK = threading.Lock()
 
 
 def route_pdf(pdf: bytes, source_url: str) -> RouterResult:
-    """Markdown for the whole PDF, pages in order. Raises if the PDF can't be opened at all."""
-    started = time.perf_counter()
-    with MUPDF_LOCK, pymupdf.open(stream=pdf, filetype="pdf") as doc:
-        page_count = doc.page_count
-        title = (doc.metadata or {}).get("title") or ""
+    """Markdown for the PDF, pages in order, up to PDF_ROUTER_MAX_PAGES. Raises if it can't be opened at all.
 
-    run = _Run(pdf, page_count, deadline=started + settings.doc_timeout_s())
-    run.run()
-    result = RouterResult(markdown=run.markdown(), title=title, pages=run.outcomes())
-    _log_summary(source_url, result, (time.perf_counter() - started) * 1000)
+    The bytes are written once to a temp file that the workers open themselves, so no
+    task carries a copy of the PDF. The file is removed when the call ends.
+    """
+    started = time.perf_counter()
+    with _temp_file(pdf) as path:
+        with MUPDF_LOCK, pymupdf.open(path) as doc:
+            page_count = doc.page_count
+            title = (doc.metadata or {}).get("title") or ""
+
+        limit = settings.max_pages()
+        routed = min(page_count, limit) if limit else page_count
+        run = _Run(path, routed, deadline=started + settings.doc_timeout_s())
+        run.run()
+    markdown = run.markdown()
+    if markdown and routed < page_count:
+        markdown += f"\n\n<!-- pages {routed + 1}-{page_count}: not extracted (over the {limit}-page limit) -->"
+    result = RouterResult(markdown=markdown, title=title, pages=run.outcomes())
+    _log_summary(source_url, result, (time.perf_counter() - started) * 1000, skipped=page_count - routed)
     return result
 
 
@@ -77,8 +90,8 @@ class _Job:
 class _Run:
     """The state of one route_pdf() call."""
 
-    def __init__(self, pdf: bytes, page_count: int, deadline: float):
-        self.pdf = pdf
+    def __init__(self, path: str, page_count: int, deadline: float):
+        self.path = path
         self.deadline = deadline
         self.available = {tier: backend.available() for tier, backend in BACKENDS.items()}
         self.ocr = self.available[Tier.LAYOUT] and scan_ocr_available()
@@ -89,13 +102,13 @@ class _Run:
 
     def run(self) -> None:
         for numbers in _chunks(range(len(self.pages))):
-            self._submit(None, numbers, _stage1, self.pdf, numbers, self.ocr)
+            self._submit(None, numbers, _stage1, self.path, numbers, self.ocr)
             self.stage1_left += 1
         while True:
             # Docling gets one call per PDF, so it waits until every page is classified.
             if not self.stage1_left and self.docling_numbers:
                 numbers, self.docling_numbers = sorted(self.docling_numbers), []
-                future = executors.docling_waiters().submit(_run_docling, self.pdf, numbers, self.deadline)
+                future = executors.docling_waiters().submit(_run_docling, self.path, numbers, self.deadline)
                 self.jobs[future] = _Job(Tier.DOCLING, numbers, None, time.perf_counter())
             remaining = self.deadline - time.perf_counter()
             if not self.jobs or remaining <= 0:
@@ -173,7 +186,7 @@ class _Run:
             self.docling_numbers += numbers
             return
         for chunk in _chunks(numbers):
-            self._submit(tier, chunk, _parse, tier, self.pdf, chunk)
+            self._submit(tier, chunk, _parse, tier, self.path, chunk)
 
     def markdown(self) -> str:
         if not any(page.markdown for page in self.pages):
@@ -194,10 +207,10 @@ class _Run:
         ]
 
 
-def _stage1(pdf: bytes, numbers: list[int], scan_ocr_available: bool) -> list[tuple]:
+def _stage1(path: str, numbers: list[int], scan_ocr_available: bool) -> list[tuple]:
     """Worker: (page, tier, markdown or None, ms, error) per page; tiers 0-1 rendered here."""
     results = []
-    with pymupdf.open(stream=pdf, filetype="pdf") as doc:
+    with pymupdf.open(path) as doc:
         for number in numbers:
             start = time.perf_counter()
             page = doc[number]
@@ -212,12 +225,12 @@ def _stage1(pdf: bytes, numbers: list[int], scan_ocr_available: bool) -> list[tu
     return results
 
 
-def _parse(tier: Tier, pdf: bytes, numbers: list[int]) -> dict[int, str]:
+def _parse(tier: Tier, path: str, numbers: list[int]) -> dict[int, str]:
     """Worker: one backend over a chunk of pages."""
-    return BACKENDS[tier].parse(pdf, numbers)
+    return BACKENDS[tier].parse(path, numbers)
 
 
-def _run_docling(pdf: bytes, numbers: list[int], deadline: float) -> dict[int, str]:
+def _run_docling(path: str, numbers: list[int], deadline: float) -> dict[int, str]:
     """Waiter thread: take a Docling slot, run the job, and stop the pool if it times out.
 
     The job's timeout starts once it holds a slot, not while it waits for one.
@@ -227,7 +240,7 @@ def _run_docling(pdf: bytes, numbers: list[int], deadline: float) -> dict[int, s
         raise TimeoutError("no free Docling slot before the time budget ran out")
     try:
         pool = executors.docling_pool()
-        future = pool.submit(_parse, Tier.DOCLING, pdf, numbers)
+        future = pool.submit(_parse, Tier.DOCLING, path, numbers)
         timeout = DOCLING_TIMEOUT_BASE_S + DOCLING_TIMEOUT_PER_PAGE_S * len(numbers)
         timeout = max(0.0, min(timeout, deadline - time.perf_counter()))
         try:
@@ -242,6 +255,26 @@ def _run_docling(pdf: bytes, numbers: list[int], deadline: float) -> dict[int, s
         slot.release()
 
 
+@contextmanager
+def _temp_file(pdf: bytes):
+    """Write the PDF once for the workers, and remove it when the call ends.
+
+    The workers open the file themselves and the operating system's page cache shares
+    it between them, so no task carries a copy of the PDF. A task still running at the
+    deadline keeps reading the unlinked file on macOS and Linux; on Windows the removal
+    fails and the file is left behind.
+    """
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as handle:
+        handle.write(pdf)
+    try:
+        yield handle.name
+    finally:
+        try:
+            os.remove(handle.name)
+        except OSError:
+            pass
+
+
 def _chunks(numbers) -> list[list[int]]:
     numbers = list(numbers)
     return [numbers[i : i + CHUNK_PAGES] for i in range(0, len(numbers), CHUNK_PAGES)]
@@ -253,7 +286,7 @@ def _marker(page: _Page) -> str:
     return f"<!-- page {page.number + 1}: not extracted ({reason}) -->"
 
 
-def _log_summary(source_url: str, result: RouterResult, total_ms: float) -> None:
+def _log_summary(source_url: str, result: RouterResult, total_ms: float, skipped: int) -> None:
     pages, ms = defaultdict(int), defaultdict(float)
     for outcome in result.pages:
         name = outcome.backend_used or "none"
@@ -264,5 +297,5 @@ def _log_summary(source_url: str, result: RouterResult, total_ms: float) -> None
     failed = sum(outcome.status == "failed" for outcome in result.pages)
     logger.info(
         f"PDF router: {source_url}: {len(result.pages)} pages in {total_ms:.0f} ms ({tiers}); "
-        f"fallbacks {fallbacks}, failed {failed}"
+        f"fallbacks {fallbacks}, failed {failed}" + (f", {skipped} pages over the page limit" if skipped else "")
     )

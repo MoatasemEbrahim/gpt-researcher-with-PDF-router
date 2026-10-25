@@ -149,8 +149,8 @@ class PlainBackend:
     def available(self) -> bool:
         return True
 
-    def parse(self, pdf: bytes, pages: list[int]) -> dict[int, str]:
-        with pymupdf.open(stream=pdf, filetype="pdf") as doc:
+    def parse(self, path: str, pages: list[int]) -> dict[int, str]:
+        with pymupdf.open(path) as doc:
             return {number: render_page(doc[number], tables=self.tables) for number in pages}
 
 
