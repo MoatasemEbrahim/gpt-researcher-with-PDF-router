@@ -12,7 +12,7 @@ import pymupdf
 import pytest
 
 from gpt_researcher.scraper.pdf_router.backends import BACKENDS, FIGURE_MARKER
-from gpt_researcher.scraper.pdf_router.backends.pymupdf_text import render_page
+from gpt_researcher.scraper.pdf_router.backends.pymupdf_text import HORIZONTAL, _dominant_direction, render_page
 from gpt_researcher.scraper.pdf_router.types import Tier
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "pdf"  # tests/fixtures/pdf
@@ -76,6 +76,26 @@ def test_sideways_page_keeps_its_text_and_drops_the_page_number(tmp_path):
     assert "Row 0: model A 91.0 model B 88.0" in markdown
     assert "Row 11:" in markdown
     assert "Page 42" not in markdown
+
+
+def _line(text: str, *, x: float, y: float, dir: tuple) -> dict:
+    """A get_text("dict") line: one span of `text`, a 10 pt box at (x, y), written in direction `dir`."""
+    return {"bbox": (x, y, x + 10, y + 10), "dir": dir, "spans": [{"text": text}]}
+
+
+def test_dominant_direction_ignores_rotated_labels_inside_a_figure():
+    """Attention paper p14: 400 rotated chars inside the figure, a 266-char horizontal caption below it."""
+    figure = pymupdf.Rect(0, 0, 500, 500)
+    blocks = [
+        {"bbox": (0, 0, 500, 500), "lines": [_line("x" * 400, x=100, y=100, dir=(0, -1))]},
+        {"bbox": (0, 600, 500, 620), "lines": [_line("y" * 266, x=100, y=600, dir=(1, 0))]},
+    ]
+
+    assert _dominant_direction(blocks, [(figure, "<!-- figure -->")]) == HORIZONTAL
+    assert _dominant_direction(blocks, []) == HORIZONTAL  # even without the figure box: 60% is no clear majority
+    blocks[1]["lines"][0]["spans"][0]["text"] = "y" * 40  # a sideways page: 400 rotated vs a 40-char page number
+    assert _dominant_direction(blocks, []) == (0, -1)
+    assert _dominant_direction([], []) == HORIZONTAL
 
 
 def test_figure_text_becomes_a_marker_and_caption_stays():

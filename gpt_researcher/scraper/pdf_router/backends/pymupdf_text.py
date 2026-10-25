@@ -16,6 +16,13 @@ from .base import FIGURE_MARKER
 # so _join_lines() joins hyphenated line ends itself.
 TEXT_FLAGS = pymupdf.TEXTFLAGS_TEXT & ~pymupdf.TEXT_PRESERVE_LIGATURES
 
+HORIZONTAL = (1, 0)
+# A page counts as set sideways only when this share of its characters outside figures and
+# tables runs one other way. A sideways page is almost entirely sideways; a figure full of
+# rotated labels is not (Attention paper p14: 400 rotated chars inside the figure, a 266-char
+# horizontal caption outside it).
+SIDEWAYS_MIN_SHARE = 0.8
+
 
 def render_page(page: pymupdf.Page, *, tables: bool) -> str:
     """Page Markdown: paragraphs in stored order, figures as a marker, and (tier 1) tables as Markdown.
@@ -47,7 +54,7 @@ def render_page(page: pymupdf.Page, *, tables: bool) -> str:
             parts.append(regions[index][1])
 
     blocks = page.get_text("dict", flags=TEXT_FLAGS)["blocks"]
-    direction = _dominant_direction(blocks)
+    direction = _dominant_direction(blocks, regions)
     for block in blocks:
         block_rect = pymupdf.Rect(block["bbox"])
         for index, (rect, _markdown) in enumerate(regions):
@@ -95,19 +102,26 @@ def _direction(line: dict) -> tuple[int, int]:
     return (0, 0)
 
 
-def _dominant_direction(blocks: list) -> tuple[int, int]:
-    """The direction most of the page's characters are written in.
+def _dominant_direction(blocks: list, regions: list) -> tuple[int, int]:
+    """The direction the page's text is written in: horizontal unless the page is set sideways.
 
-    Lines written in any other direction are dropped. On a normal page that is
-    the arXiv margin stamp or a watermark. On a page set sideways (a landscape
-    table in a portrait document) it is the page number, and the sideways text,
-    which the old rule threw away, is kept.
+    Lines written in any other direction are dropped: on a normal page the arXiv
+    margin stamp, a watermark or a rotated figure label; on a page set sideways
+    (a landscape table in a portrait document) the page number, while the sideways
+    text, which the old rule threw away, is kept. Only text outside figures and
+    tables counts, and a page is sideways only when SIDEWAYS_MIN_SHARE of that text
+    runs one other way: a figure full of rotated labels must not take its horizontal
+    caption down with it.
     """
     chars = Counter()
     for block in blocks:
         for line in block.get("lines", []):
-            chars[_direction(line)] += sum(len(span["text"]) for span in line["spans"])
-    return max(chars, key=chars.get) if chars else (1, 0)
+            if _region_of(pymupdf.Rect(line["bbox"]), regions) is None:
+                chars[_direction(line)] += sum(len(span["text"]) for span in line["spans"])
+    if not chars:
+        return HORIZONTAL
+    direction, count = max(chars.items(), key=lambda item: item[1])
+    return direction if count >= SIDEWAYS_MIN_SHARE * sum(chars.values()) else HORIZONTAL
 
 
 def _join_lines(lines: list[str]) -> str:
